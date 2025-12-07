@@ -1,1 +1,5 @@
-# try2
+# GeoJSON Harita Örneği
+
+1. `npm install`
+2. `npm run dev`
+3. `public/text.geojson` dosyasını değiştirip sayfayı yenileyin.
