@@ -9,18 +9,15 @@
   box-sizing: border-box;
 }
 
-html, body {
+body {
   margin: 0;
-  padding: 0;
-  height: 100%;
-  width: 100%;
+  min-height: 100vh;
 }
 
 .app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  width: 100vw;
+  min-height: 100vh;
 }
 
 .banner {
@@ -35,19 +32,32 @@ html, body {
 .map-wrapper {
   position: relative;
   flex: 1;
-  height: 100%;
-  overflow: hidden;
 }
 
 #map {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 100%;
+  height: 100vh;
   width: 100%;
   background: #e2e8f0;
+}
+
+.text-label {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  pointer-events: none;
+}
+
+.text-label span {
+  font-size: var(--text-size, 12px);
+  font-weight: 600;
+  color: #1e40af;
+  text-shadow: 
+    -1px -1px 0 #fff,
+     1px -1px 0 #fff,
+    -1px  1px 0 #fff,
+     1px  1px 0 #fff,
+     0 0 3px rgba(255,255,255,0.8);
+  white-space: nowrap;
 }
 
 .status {

@@ -1,77 +1,165 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import './styles.css';
 
-// Vite taban yoluna göre doğru yerel dosyayı çekebilmek için BASE_URL kullanılır.
-const GEOJSON_URL = `${import.meta.env.BASE_URL}text.geojson`;
+// --- ÖZEL TEXT RENDERER SINIFI ---
+// Leaflet'in Canvas renderer'ını kullanarak HTML yerine doğrudan çizim yapar.
+// Bu sayede 4000+ obje kasma yapmaz ve AutoCAD gibi zoom ile büyür/küçülür.
+L.TextLabel = L.CircleMarker.extend({
+  options: {
+    text: '',
+    textStyle: '300',  // Light font weight (ince, kibar)
+    textColor: '#333',  // Koyu gri, siyah değil
+    textBaseSize: 10,   // Küçültüldü (24 -> 10)
+    refZoom: 20,
+    interactive: false
+  },
+
+  _updatePath: function () {
+    const element = this._renderer._ctx;
+    const p = this._point;
+    const map = this._map;
+    
+    if (!map) return;
+
+    const zoom = map.getZoom();
+    const scale = Math.pow(2, zoom - this.options.refZoom);
+    const fontSize = this.options.textBaseSize * scale;
+
+    if (fontSize < 1) return; 
+
+    element.font = this.options.textStyle + ' ' + fontSize + 'px sans-serif';
+    element.fillStyle = this.options.textColor;
+    element.textAlign = 'center';
+    element.textBaseline = 'middle';
+
+    element.lineWidth = fontSize / 8;  // Daha ince stroke
+    element.strokeStyle = 'rgba(255,255,255,0.8)';
+    element.strokeText(this.options.text, p.x, p.y);
+    element.fillText(this.options.text, p.x, p.y);
+  }
+});
+
+L.textLabel = function (latlng, options) {
+  return new L.TextLabel(latlng, options);
+};
+
+const canvasRenderer = L.canvas({ padding: 0.5 });
+
+const GEOJSON_FILES = [
+  { url: '/fulll.geojson', name: 'fulll', color: '#2563eb', fillColor: '#3b82f6' },
+  { url: '/string_text.geojson', name: 'string_text', color: '#dc2626', fillColor: '#ef4444' },
+];
 
 function App() {
   const mapRef = useRef(null);
-  const geoJsonLayerRef = useRef(null);
-  const [status, setStatus] = useState('GeoJSON yükleniyor...');
+  const layersRef = useRef([]);
+  const [status, setStatus] = useState('Harita başlatılıyor...');
 
-  const fetchGeoJson = async () => {
+  const fetchAllGeoJson = async () => {
     if (!mapRef.current) return;
-    setStatus('GeoJSON yükleniyor...');
-    try {
-      const response = await fetch(GEOJSON_URL, { cache: 'no-store' });
-      if (!response.ok) {
-        throw new Error(`Sunucu cevabı: ${response.status}`);
-      }
+    setStatus('Veriler yükleniyor...');
 
-      const data = await response.json();
+    layersRef.current.forEach(l => l.remove());
+    layersRef.current = [];
+    
+    const allBounds = L.latLngBounds();
+    let totalFeatures = 0;
 
-      if (geoJsonLayerRef.current) {
-        geoJsonLayerRef.current.remove();
-      }
+    for (const file of GEOJSON_FILES) {
+      try {
+        const response = await fetch(file.url);
+        if (!response.ok) continue;
+        const data = await response.json();
+        totalFeatures += data.features?.length || 0;
 
-      geoJsonLayerRef.current = L.geoJSON(data, {
-        style: {
-          color: '#2563eb',
-          weight: 2,
-        },
-      }).addTo(mapRef.current);
+        const layer = L.geoJSON(data, {
+          renderer: canvasRenderer,
+          interactive: false,
+          style: {
+            color: file.color,
+            weight: 1,
+            fillColor: file.fillColor,
+            fillOpacity: 0.4,
+          },
+          pointToLayer: (feature, latlng) => {
+            if (feature.properties?.text) {
+                return L.textLabel(latlng, {
+                    text: feature.properties.text,
+                    renderer: canvasRenderer,
+                    textBaseSize: 8,   // Küçük boyut
+                    textStyle: '300',  // Thin/Light
+                    textColor: '#444'
+                });
+            }
+            return L.circleMarker(latlng, { renderer: canvasRenderer, radius: 2 });
+          },
+          onEachFeature: (feature, layer) => {
+            if (feature.properties?.text && feature.geometry.type !== 'Point') {
+              let center;
+              if (typeof layer.getBounds === 'function') {
+                center = layer.getBounds().getCenter();
+              } else if (typeof layer.getLatLng === 'function') {
+                center = layer.getLatLng();
+              }
 
-      const bounds = geoJsonLayerRef.current.getBounds();
-      if (bounds.isValid()) {
-        mapRef.current.fitBounds(bounds, { padding: [16, 16] });
-      }
+              if (center) {
+                const textMarker = L.textLabel(center, {
+                  text: feature.properties.text,
+                  renderer: canvasRenderer,
+                  textBaseSize: 20,   // 80 -> 20 (küçültüldü)
+                  refZoom: 22,
+                  textStyle: '300',   // Thin/Light
+                  textColor: '#333'   // Koyu gri
+                });
+                textMarker.addTo(mapRef.current);
+                layersRef.current.push(textMarker);
+              }
+            }
+          }
+        }).addTo(mapRef.current);
+        
+        layersRef.current.push(layer);
+        if (layer.getBounds().isValid()) allBounds.extend(layer.getBounds());
 
-      setStatus('GeoJSON yüklendi');
-    } catch (error) {
-      console.error('GeoJSON yüklenirken hata oluştu:', error);
-      setStatus(`Hata: ${error.message}`);
+      } catch (err) { console.error(err); }
     }
+
+    if (allBounds.isValid()) mapRef.current.fitBounds(allBounds);
+    
+    setStatus('Hazır: ' + totalFeatures + ' obje (Canvas Mode)');
   };
 
   useEffect(() => {
     mapRef.current = L.map('map', {
       zoomControl: true,
-    }).setView([39.0, 35.2], 6);
+      preferCanvas: true,
+      zoomAnimation: true,
+    }).setView([39, 35], 6);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap katkıcıları',
-      maxZoom: 19,
+      maxZoom: 23,
+      maxNativeZoom: 19,
+      attribution: '&copy; OSMap'
     }).addTo(mapRef.current);
 
-    fetchGeoJson();
+    fetchAllGeoJson();
 
-    return () => {
-      mapRef.current?.remove();
-    };
+    return () => mapRef.current?.remove();
   }, []);
 
   return (
     <div className="app">
-      <div className="banner">
-        `public/text.geojson` dosyasını buraya kopyalayın, sayfayı yenileyin ve haritada görün.
-      </div>
       <div className="map-wrapper">
-        <div id="map" aria-label="GeoJSON haritası" />
-        <div className="status">{status}</div>
-        <button className="reload-btn" type="button" onClick={fetchGeoJson}>
-          GeoJSON'u Yenile
-        </button>
+        <div id="map" />
+        <div className="status" style={{
+            position:'absolute', top:10, left:50, zIndex:999, 
+            background:'white', padding:'5px 10px', borderRadius:'4px',
+            boxShadow:'0 2px 6px rgba(0,0,0,0.2)', fontWeight:'bold'
+        }}>
+          {status}
+        </div>
       </div>
     </div>
   );
